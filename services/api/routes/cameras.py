@@ -463,22 +463,25 @@ async def get_camera_live_stream(camera_id: str, request: Request, db: Session =
     async def frame_generator():
         last_sent = 0
         t_wait = time.time()
-        while worker.latest_jpeg is None and (time.time() - t_wait < 10.0):
-            if await request.is_disconnected():
-                return
-            await asyncio.sleep(0.1)
-            
-        while not await request.is_disconnected():
-            with worker.lock:
-                jpeg = worker.latest_jpeg
-                t = worker.last_update
-            if jpeg is not None and t > last_sent:
-                last_sent = t
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
-                )
-            await asyncio.sleep(0.035)
+        try:
+            while worker.latest_jpeg is None and (time.time() - t_wait < 10.0):
+                if await request.is_disconnected():
+                    return
+                await asyncio.sleep(0.1)
+                
+            while not await request.is_disconnected():
+                with worker.lock:
+                    jpeg = worker.latest_jpeg
+                    t = worker.last_update
+                if jpeg is not None and t > last_sent:
+                    last_sent = t
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
+                    )
+                await asyncio.sleep(0.035)
+        except (asyncio.CancelledError, GeneratorExit):
+            return
 
     return StreamingResponse(
         frame_generator(),
