@@ -1,0 +1,92 @@
+services:
+  # ----------------------------------------------------------------------------
+  # MySQL 8.0 Database Service
+  # ----------------------------------------------------------------------------
+  mysql:
+    image: mysql:8.0
+    container_name: safesite-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: safesitevision
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db schema/02_create_tables.sql:/docker-entrypoint-initdb.d/01_tables.sql:ro
+      - ./db schema/03_indexes.sql:/docker-entrypoint-initdb.d/02_indexes.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - safesite-net
+
+  # ----------------------------------------------------------------------------
+  # Backend API & RTSP Ingest Service
+  # ----------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: safesite-api
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql+pymysql://root:root@mysql:3306/safesitevision
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: safesitevision
+      STORAGE_DIR: storage/evidence
+      OPENCV_FFMPEG_CAPTURE_OPTIONS: "rtsp_transport;tcp"
+      DEVICE: cpu
+      DEFAULT_CONF_THRESHOLD: 0.50
+    ports:
+      - "8000:8000"
+    volumes:
+      - storage_data:/app/storage
+      - ./configs:/app/configs:ro
+      - ./models:/app/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - safesite-net
+
+  # ----------------------------------------------------------------------------
+  # Frontend Web Dashboard (React + Vite + Nginx)
+  # ----------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: safesite-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "5173:80"
+      - "80:80"
+    networks:
+      - safesite-net
+
+volumes:
+  mysql_data:
+    name: safesite_mysql_data
+  storage_data:
+    name: safesite_storage_data
+
+networks:
+  safesite-net:
+    name: safesite_network
+    driver: bridge

@@ -1,0 +1,14 @@
+{
+  "model_version": "ppe-yolo11s-v1.0",
+  "base_model": "yolo11n.pt",
+  "device": "cuda:0",
+  "mAP50": 0.892,
+  "mAP50_95": 0.674,
+  "classes": {
+    "person": 0,
+    "head_helmet": 1,
+    "head_no_helmet": 2,
+    "foot_safety_shoe": 3,
+    "foot_no_safety_shoe": 4
+  }
+}

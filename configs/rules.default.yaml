@@ -1,0 +1,32 @@
+sampling_fps: 6
+voting:
+  window_frames: 15
+  min_votes: 8
+  confirm_ratio: 0.70
+  clear_ratio: 0.20
+thresholds:
+  head_helmet: 0.50
+  head_no_helmet: 0.55
+  foot_safety_shoe: 0.50
+  foot_no_safety_shoe: 0.55
+size_gates:
+  min_head_px: 24
+  min_foot_px: 24
+episode:
+  t_clear_s: 20
+  t_gone_s: 60
+  cooldown_s: 1800
+reid:
+  enabled: true
+  link_similarity: 0.75
+  grey_band_low: 0.60
+  max_gap_s: 60
+evidence:
+  pre_roll_s: 5
+  post_roll_s: 5
+  keep_alternates: 3
+alerts:
+  zone_rate_limit_per_min: 6
+retention_days:
+  false_positive: 30
+  default: 180

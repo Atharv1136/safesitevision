@@ -1,0 +1,10 @@
+cameras:
+  - name: "Assembly-Bay-1-Cam-A"
+    brand: "replay"
+    rtsp: "tests/fixtures/sample_walk.mp4"
+    zones:
+      - name: "Assembly Line 1"
+        polygon: [[0.05, 0.35], [0.95, 0.35], [0.95, 0.98], [0.05, 0.98]]
+        helmet_required: true
+        shoes_required: true
+        priority: 1
