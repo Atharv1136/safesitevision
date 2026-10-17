@@ -40,7 +40,7 @@ export const ZoneEditor: React.FC<ZoneEditorProps> = ({
   useEffect(() => {
     setStreamError(false);
     setSnapshotTimestamp(Date.now());
-  }, [selectedCamera]);
+  }, [selectedCamera?.id]);
 
   // Simulated test mode workers with foot-points
   const testWorkers = [
@@ -384,7 +384,7 @@ export const ZoneEditor: React.FC<ZoneEditorProps> = ({
             {/* Camera Video Stream Element */}
             {selectedCamera ? (
               <img
-                key={`${selectedCamera.id}-${isLiveStream}-${snapshotTimestamp}`}
+                key={isLiveStream ? `${selectedCamera.id}-live` : `${selectedCamera.id}-snap-${snapshotTimestamp}`}
                 src={
                   isLiveStream
                     ? `http://127.0.0.1:8000/api/v1/cameras/${selectedCamera.id}/live`

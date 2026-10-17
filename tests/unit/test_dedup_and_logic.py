@@ -342,6 +342,24 @@ def test_tc_logic_04_person_in_excluded_zone(zone_manager):
     matched = zone_manager.match_foot_point((0.5, 0.5))
     assert matched is None, "Exclusion zone must subtract and reject foot-point"
 
+def test_tc_logic_08_seated_worker_head_zone_match(zone_manager):
+    # Person sitting down: feet at (0.5, 0.95) outside a torso-level zone [0.1, 0.1]->[0.9, 0.6]
+    # But head is at (0.5, 0.3) inside the active zone
+    active_head_zone = Zone(
+        zone_id="upper-zone",
+        name="Desk Danger Zone",
+        polygon_pts=[[0.1, 0.1], [0.9, 0.1], [0.9, 0.6], [0.1, 0.6]],
+        priority=1,
+        helmet_required=True
+    )
+    zm = ZoneManager([active_head_zone])
+    # Foot point alone is outside (y=0.85)
+    assert zm.match_foot_point((0.5, 0.85)) is None
+    # match_person matches via head_pt or center_pt
+    matched = zm.match_person(bbox=[0.4, 0.2, 0.6, 0.85], head_pt=(0.5, 0.3))
+    assert matched is not None
+    assert matched.zone_id == "upper-zone"
+
 # -------------------------------------------------------------
 # TC-LOGIC-05: Bare head / cap -> violating
 # -------------------------------------------------------------

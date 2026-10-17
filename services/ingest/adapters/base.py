@@ -42,10 +42,19 @@ class CameraAdapter(ABC):
         """Returns the complete RTSP/HTTP stream URI."""
         pass
 
+    def open_video_capture(self, uri: Optional[str] = None) -> cv2.VideoCapture:
+        """Opens cv2.VideoCapture with FFMPEG fallback and device index support."""
+        target_uri = uri or self.get_stream_uri()
+        if str(target_uri).strip().isdigit():
+            return cv2.VideoCapture(int(str(target_uri).strip()))
+        cap = cv2.VideoCapture(target_uri, cv2.CAP_FFMPEG)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(target_uri)
+        return cap
+
     def get_snapshot(self) -> Optional[np.ndarray]:
         """Fetches a single frame (JPEG) from the stream."""
-        uri = self.get_stream_uri()
-        cap = cv2.VideoCapture(uri, cv2.CAP_FFMPEG)
+        cap = self.open_video_capture()
         if not cap.isOpened():
             return None
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -66,7 +75,7 @@ class CameraAdapter(ABC):
         """
         start_t = time.time()
         uri = self.get_stream_uri()
-        cap = cv2.VideoCapture(uri, cv2.CAP_FFMPEG)
+        cap = self.open_video_capture(uri)
         
         if not cap.isOpened():
             latency_ms = int((time.time() - start_t) * 1000)

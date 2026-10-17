@@ -67,10 +67,23 @@ export function App() {
       // Get cameras
       const camRes = await fetch(`${API_BASE}/cameras`);
       if (camRes.ok) {
-        const camData = await camRes.json();
+        const camData: Camera[] = await camRes.json();
         setCameras(camData);
-        if (camData.length > 0 && !selectedCamera) {
-          setSelectedCamera(camData[0]);
+        if (camData.length > 0) {
+          setSelectedCamera((prev) => {
+            if (!prev) return camData[0];
+            const match = camData.find((c) => c.id === prev.id);
+            if (!match) return camData[0];
+            if (
+              match.status === prev.status &&
+              match.name === prev.name &&
+              match.width === prev.width &&
+              match.height === prev.height
+            ) {
+              return prev;
+            }
+            return match;
+          });
         }
       }
 
@@ -100,7 +113,7 @@ export function App() {
 
   // 2. Fetch zones when selected camera changes
   useEffect(() => {
-    if (!selectedCamera) return;
+    if (!selectedCamera?.id) return;
     const fetchZones = async () => {
       try {
         const res = await fetch(`${API_BASE}/cameras/${selectedCamera.id}/zones`);
@@ -113,7 +126,7 @@ export function App() {
       }
     };
     fetchZones();
-  }, [selectedCamera]);
+  }, [selectedCamera?.id]);
 
   // 3. WebSocket Real-Time Connection
   useEffect(() => {

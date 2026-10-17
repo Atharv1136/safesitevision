@@ -174,3 +174,38 @@ class ZoneManager:
                 return zone
                 
         return None
+
+    def match_person(
+        self,
+        bbox: List[float],
+        head_pt: Optional[Tuple[float, float]] = None,
+        foot_pt: Optional[Tuple[float, float]] = None
+    ) -> Optional[Zone]:
+        """
+        Matches a person to an active zone.
+        Checks foot-point first (standard for standing workers on factory floor).
+        If foot-point is outside or not matched, falls back to checking:
+        1. Head point (vital when a zone is drawn around a workstation, desk, or worker's upper body)
+        2. Center point of the person bounding box
+        """
+        if foot_pt is None and len(bbox) >= 4:
+            foot_pt = ((bbox[0] + bbox[2]) / 2.0, bbox[3])
+
+        if foot_pt is not None:
+            winning = self.match_foot_point(foot_pt)
+            if winning is not None:
+                return winning
+
+        # Fallback to head point
+        if head_pt is not None:
+            winning_head = self.match_foot_point(head_pt)
+            if winning_head is not None:
+                return winning_head
+
+        # Fallback to center point
+        if len(bbox) >= 4:
+            center_pt = ((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0)
+            return self.match_foot_point(center_pt)
+
+        return None
+

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import type { Camera } from "../types";
-import { Plus, Video, RefreshCw, Trash2 } from "lucide-react";
+import { Plus, Video, RefreshCw, Trash2, Smartphone } from "lucide-react";
 
 interface CameraManagerProps {
   cameras: Camera[];
@@ -31,6 +31,7 @@ export const CameraManager: React.FC<CameraManagerProps> = ({
   const [customUrl, setCustomUrl] = useState("");
 
   const brandPresets = [
+    { id: "phone", name: "📱 Mobile Phone Camera (IP Webcam / DroidCam)", desc: "Use Android or iPhone as CCTV over Wi-Fi" },
     { id: "hikvision", name: "Hikvision", desc: "RTSP: /Streaming/Channels/{ch}01" },
     { id: "dahua", name: "Dahua", desc: "RTSP: /cam/realmonitor?channel={ch}&subtype=0" },
     { id: "cpplus", name: "CP Plus", desc: "RTSP: /cam/realmonitor?channel={ch}&subtype=0" },
@@ -38,18 +39,34 @@ export const CameraManager: React.FC<CameraManagerProps> = ({
     { id: "axis", name: "Axis", desc: "RTSP: /axis-media/media.amp" },
     { id: "hanwha", name: "Hanwha (Samsung)", desc: "RTSP: /profile1/media.smp" },
     { id: "onvif", name: "Any ONVIF Profile S/T", desc: "Discovered RTSP URI" },
-    { id: "generic", name: "Custom RTSP Stream", desc: "Direct RTSP URL" },
+    { id: "generic", name: "Custom RTSP / HTTP Stream", desc: "Direct Stream URL" },
     { id: "replay", name: "Virtual Video Replay", desc: "Local MP4 file loop" },
   ];
 
-  const handleOpenAddModal = () => {
-    setName("");
-    setLocation("");
-    setBrand("hikvision");
+  const handleBrandChange = (newBrand: string) => {
+    setBrand(newBrand);
+    if (newBrand === "phone") {
+      if (!name) setName("Mobile Phone Camera (Test)");
+      if (!location) setLocation("Testing Bench");
+      setPort(8080);
+      setUsername("");
+      setPassword("");
+    } else if (newBrand === "replay") {
+      setPort(0);
+    } else if (port === 8080 || port === 4747) {
+      setPort(554);
+      if (username === "") setUsername("admin");
+    }
+  };
+
+  const handleOpenAddModal = (presetBrand: string = "hikvision") => {
+    setName(presetBrand === "phone" ? "Mobile Phone Camera (Test)" : "");
+    setLocation(presetBrand === "phone" ? "Testing Bench" : "");
+    setBrand(presetBrand);
     setHost("");
-    setPort(554);
+    setPort(presetBrand === "phone" ? 8080 : 554);
     setChannel(1);
-    setUsername("admin");
+    setUsername(presetBrand === "phone" ? "" : "admin");
     setPassword("");
     setCustomUrl("");
     setShowAddModal(true);
@@ -100,24 +117,29 @@ export const CameraManager: React.FC<CameraManagerProps> = ({
           </p>
         </div>
 
-        <button className="btn-primary" onClick={handleOpenAddModal}>
+        <button className="btn-primary" onClick={() => handleOpenAddModal()}>
           <Plus size={16} /> Add Camera or NVR Channel
         </button>
       </div>
 
       {/* Empty State or Cameras Grid */}
       {cameras.length === 0 ? (
-        <div className="glass-panel" style={{ padding: "60px 24px", textAlign: "center", maxWidth: 600, margin: "40px auto" }}>
+        <div className="glass-panel" style={{ padding: "60px 24px", textAlign: "center", maxWidth: 640, margin: "40px auto" }}>
           <div style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(14, 165, 233, 0.15)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
             <Video size={28} color="#0ea5e9" />
           </div>
           <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>No Cameras Connected</h3>
           <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 20, lineHeight: 1.6 }}>
-            No live CCTV or RTSP camera streams have been added yet. Add your local Hikvision camera to begin streaming and real-time AI PPE detection.
+            No live CCTV or RTSP camera streams have been added yet. You can connect an industrial CCTV camera (Hikvision, Dahua, CP Plus) or test immediately using your <b>mobile phone camera</b> over Wi-Fi.
           </p>
-          <button className="btn-primary" onClick={handleOpenAddModal} style={{ margin: "0 auto" }}>
-            <Plus size={16} /> Add Your Hikvision Camera
-          </button>
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+            <button className="btn-primary" onClick={() => handleOpenAddModal("phone")}>
+              <Smartphone size={16} /> 📱 Connect Mobile Phone (Test)
+            </button>
+            <button className="btn-secondary" onClick={() => handleOpenAddModal("hikvision")}>
+              <Plus size={16} /> Add CCTV / NVR Camera
+            </button>
+          </div>
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 18 }}>
@@ -126,7 +148,11 @@ export const CameraManager: React.FC<CameraManagerProps> = ({
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ padding: 8, background: "#1f2937", borderRadius: 8 }}>
-                    <Video size={20} color="#0ea5e9" />
+                    {c.brand === "phone" ? (
+                      <Smartphone size={20} color="#38bdf8" />
+                    ) : (
+                      <Video size={20} color="#0ea5e9" />
+                    )}
                   </div>
                   <div>
                     <h3 style={{ fontSize: 15, fontWeight: 700 }}>{c.name}</h3>
@@ -214,8 +240,10 @@ export const CameraManager: React.FC<CameraManagerProps> = ({
       {/* Add Camera Modal */}
       {showAddModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div className="glass-panel" style={{ width: "100%", maxWidth: 640, padding: 24 }}>
-            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>Add CCTV Camera / NVR Channel</h3>
+          <div className="glass-panel" style={{ width: "100%", maxWidth: 640, padding: 24, maxHeight: "90vh", overflowY: "auto" }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>
+              {brand === "phone" ? "📱 Connect Mobile Phone Camera" : "Add CCTV Camera / NVR Channel"}
+            </h3>
 
             <form onSubmit={handleCreateCamera} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -231,10 +259,10 @@ export const CameraManager: React.FC<CameraManagerProps> = ({
 
               {/* Brand Preset */}
               <div>
-                <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>Brand Preset</label>
+                <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>Camera Type / Brand Preset</label>
                 <select
                   value={brand}
-                  onChange={(e) => setBrand(e.target.value)}
+                  onChange={(e) => handleBrandChange(e.target.value)}
                   style={{ width: "100%" }}
                 >
                   {brandPresets.map((bp) => (
@@ -245,40 +273,137 @@ export const CameraManager: React.FC<CameraManagerProps> = ({
                 </select>
               </div>
 
+              {/* Mobile Phone Quick Helper Card */}
+              {brand === "phone" && (
+                <div style={{ background: "rgba(14, 165, 233, 0.08)", border: "1px solid rgba(14, 165, 233, 0.3)", borderRadius: 8, padding: 14, fontSize: 12 }}>
+                  <div style={{ fontWeight: 600, color: "#38bdf8", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                    <Smartphone size={16} />
+                    <span>How to stream from your phone in 60 seconds:</span>
+                  </div>
+                  <ol style={{ paddingLeft: 18, margin: "4px 0", color: "var(--text-muted)", display: "flex", flexDirection: "column", gap: 5 }}>
+                    <li>
+                      Install free <b>IP Webcam</b> (Android by Pavel Khlebovich) or <b>IP Camera Lite</b> / <b>DroidCam</b> (iPhone or Android).
+                    </li>
+                    <li>
+                      Ensure phone & PC are on the <b>same Wi-Fi</b> (or connect your PC to your phone's Mobile Hotspot).
+                    </li>
+                    <li>
+                      Open the app and tap <b>"Start Server"</b>.
+                    </li>
+                    <li>
+                      Type the IP address shown on your phone screen below (e.g., <code>192.168.1.15</code>).
+                    </li>
+                  </ol>
+
+                  <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
+                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Quick presets:</span>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      style={{ fontSize: 11, padding: "3px 8px" }}
+                      onClick={() => { setPort(8080); setCustomUrl(""); }}
+                    >
+                      IP Webcam (Port 8080)
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      style={{ fontSize: 11, padding: "3px 8px" }}
+                      onClick={() => { setPort(4747); setCustomUrl(""); }}
+                    >
+                      DroidCam (Port 4747)
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      style={{ fontSize: 11, padding: "3px 8px" }}
+                      onClick={() => { setHost("0"); setPort(0); setCustomUrl("0"); }}
+                    >
+                      Laptop Built-in Webcam (Index 0)
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {brand !== "replay" && (
                 <>
                   <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12 }}>
                     <div>
-                      <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>IP Address / Host</label>
-                      <input required placeholder="192.168.31.141 (no http://)" value={host} onChange={(e) => setHost(e.target.value)} style={{ width: "100%" }} />
+                      <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>
+                        {brand === "phone" ? "Phone Wi-Fi IP Address" : "IP Address / Host"}
+                      </label>
+                      <input
+                        required
+                        placeholder={brand === "phone" ? "e.g. 192.168.1.15" : "192.168.31.141 (no http://)"}
+                        value={host}
+                        onChange={(e) => setHost(e.target.value)}
+                        style={{ width: "100%" }}
+                      />
                     </div>
                     <div>
-                      <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>RTSP Port</label>
-                      <input type="number" value={port} onChange={(e) => setPort(parseInt(e.target.value) || 554)} style={{ width: "100%" }} />
+                      <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>
+                        {brand === "phone" ? "App Port" : "RTSP Port"}
+                      </label>
+                      <input
+                        type="number"
+                        value={port}
+                        onChange={(e) => setPort(parseInt(e.target.value) || 0)}
+                        style={{ width: "100%" }}
+                      />
                     </div>
                     <div>
                       <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>Channel</label>
-                      <input type="number" min={1} value={channel} onChange={(e) => setChannel(parseInt(e.target.value) || 1)} style={{ width: "100%" }} />
+                      <input
+                        type="number"
+                        min={1}
+                        value={channel}
+                        onChange={(e) => setChannel(parseInt(e.target.value) || 1)}
+                        style={{ width: "100%" }}
+                      />
                     </div>
                   </div>
 
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                     <div>
-                      <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>RTSP Username</label>
-                      <input required placeholder="admin" value={username} onChange={(e) => setUsername(e.target.value)} style={{ width: "100%" }} />
+                      <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>
+                        {brand === "phone" ? "Username (Optional)" : "RTSP Username"}
+                      </label>
+                      <input
+                        required={brand !== "phone"}
+                        placeholder={brand === "phone" ? "Optional (leave blank if none)" : "admin"}
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        style={{ width: "100%" }}
+                      />
                     </div>
                     <div>
-                      <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>RTSP Password</label>
-                      <input required type="password" placeholder="Camera Password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%" }} />
+                      <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>
+                        {brand === "phone" ? "Password (Optional)" : "RTSP Password"}
+                      </label>
+                      <input
+                        required={brand !== "phone"}
+                        type="password"
+                        placeholder={brand === "phone" ? "Optional" : "Camera Password"}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        style={{ width: "100%" }}
+                      />
                     </div>
                   </div>
                 </>
               )}
 
-              {brand === "generic" && (
+              {(brand === "generic" || brand === "phone") && (
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>Custom RTSP URL</label>
-                  <input placeholder="rtsp://user:pass@192.168.1.50:554/live" value={customUrl} onChange={(e) => setCustomUrl(e.target.value)} style={{ width: "100%" }} />
+                  <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>
+                    Custom Stream URL (Optional direct override)
+                  </label>
+                  <input
+                    placeholder={brand === "phone" ? "http://192.168.1.15:8080/video" : "rtsp://user:pass@192.168.1.50:554/live"}
+                    value={customUrl}
+                    onChange={(e) => setCustomUrl(e.target.value)}
+                    style={{ width: "100%" }}
+                  />
                 </div>
               )}
 

@@ -47,6 +47,8 @@ Only the **adapter** knows brand-specific details (URL template, snapshot endpoi
 | **Reolink** | `rtsp://USER:PASS@IP:554/Preview_01_main` | `/Preview_01_sub` | Some firmware uses `h264Preview_01_main`; RTSP/ONVIF must be enabled in settings |
 | **TP-Link Tapo / VIGI** | `rtsp://USER:PASS@IP:554/stream1` | `/stream2` | Create a separate *camera account* in the app; use that, not the cloud login |
 | **Honeywell, Pelco, others** | — | — | Use **ONVIF** discovery or paste the RTSP URL from the manual |
+| **Mobile Phone (Android/iOS)** | `http://IP:8080/video` (IP Webcam) or `http://IP:4747/video` (DroidCam) | `rtsp://IP:8080/h264_pcm.sdp` | Excellent for dev & testing without physical CCTV; streams directly over local Wi-Fi |
+| **Local Webcam / USB Cam** | Device index `0` (built-in webcam) or `1` (external USB) | — | Enter `0` in host for instant testing from your laptop camera |
 | **Any ONVIF device** | resolved at runtime via `GetStreamUri` | pick the lower-resolution profile | Best universal option |
 
 ### Generic discovery fallback

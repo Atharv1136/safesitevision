@@ -35,6 +35,7 @@ def create_camera(
     cam_id = str(uuid.uuid4())
     from services.ingest.adapters.registry import sanitize_host
     clean_host = sanitize_host(req.host)
+    creds_str = json.dumps({"username": req.username, "password": req.password}) if (req.username or req.password) else None
     camera = Camera(
         id=cam_id,
         name=req.name,
@@ -67,6 +68,7 @@ def get_brand_presets():
         {"brand": "axis", "name": "Axis", "port": 554, "path_template": "/axis-media/media.amp"},
         {"brand": "hanwha", "name": "Hanwha (Samsung)", "port": 554, "path_template": "/profile1/media.smp"},
         {"brand": "generic", "name": "Generic RTSP / ONVIF", "port": 554, "path_template": "/live"},
+        {"brand": "phone", "name": "Mobile Phone (IP Webcam / DroidCam)", "port": 8080, "path_template": "/video"},
         {"brand": "replay", "name": "Virtual Replay Stream", "port": 0, "path_template": "local_file"}
     ]
 
@@ -154,6 +156,30 @@ def test_camera_connection(
     db.commit()
     return res
 
+from collections import deque
+from datetime import datetime
+from services.inference.detector import PPEInferenceEngine
+from services.rules.engine.episodes import EpisodeEngine
+from services.rules.engine.states import FrameStateEvaluator
+from services.rules.engine.zones import Zone, ZoneManager
+from services.evidence.builder import EvidenceBuilder
+from services.api.database import SessionLocal, Zone as DBZone, Episode as DBEpisode, ViolationEvent as DBViolationEvent
+from services.api.routes.ws import broadcast_sync
+from classes import RULE_NO_HELMET, RULE_NO_SAFETY_SHOES
+
+_global_inference_engine = None
+_engine_lock = threading.Lock()
+
+def get_shared_inference_engine():
+    global _global_inference_engine
+    with _engine_lock:
+        if _global_inference_engine is None:
+            m_path = "models/yolov8m_hardhat.pt"
+            if not os.path.exists(m_path):
+                m_path = "models/ppe-yolo11s-v1.0/best.pt"
+            _global_inference_engine = PPEInferenceEngine(model_path=m_path)
+        return _global_inference_engine
+
 class StreamWorker(threading.Thread):
     def __init__(self, camera_data: dict):
         super().__init__(daemon=True)
@@ -164,6 +190,104 @@ class StreamWorker(threading.Thread):
         self.running = True
         self.lock = threading.Lock()
         self.last_update = 0.0
+        self.frame_idx = 0
+        self.ring_buffer = deque(maxlen=25)
+        self.episode_engine = EpisodeEngine(camera_id=self.camera_id)
+        self.state_evaluator = FrameStateEvaluator()
+        self.evidence_builder = EvidenceBuilder()
+        self.cached_zones = None
+        self.last_zone_refresh = 0.0
+
+    def get_zone_manager(self) -> ZoneManager:
+        now = time.time()
+        if self.cached_zones is None or (now - self.last_zone_refresh > 5.0):
+            try:
+                db = SessionLocal()
+                db_zones = db.query(DBZone).filter(DBZone.camera_id == self.camera_id).all()
+                active_zones = []
+                for dz in db_zones:
+                    active_zones.append(Zone(
+                        zone_id=dz.id,
+                        name=dz.name,
+                        polygon_pts=dz.polygon,
+                        priority=dz.priority,
+                        helmet_required=dz.helmet_required,
+                        shoes_required=dz.shoes_required,
+                        is_excluded=dz.is_excluded
+                    ))
+                db.close()
+                self.cached_zones = ZoneManager(active_zones)
+                self.last_zone_refresh = now
+            except Exception:
+                if self.cached_zones is None:
+                    self.cached_zones = ZoneManager([])
+        return self.cached_zones
+
+    def _record_violation_event(self, ev_data: dict, person: dict, zone: Zone, rule: str, now: float):
+        try:
+            event_id = str(uuid.uuid4())
+            evidence = self.evidence_builder.build_evidence(
+                event_id=event_id,
+                frames=list(self.ring_buffer),
+                person_data=person,
+                camera_name=self.camera_data.get("name", "Camera"),
+                zone_name=zone.name,
+                rule=rule,
+                timestamp=now
+            )
+            
+            db = SessionLocal()
+            ep = DBEpisode(
+                id=ev_data["episode_id"],
+                camera_id=self.camera_id,
+                zone_id=zone.zone_id,
+                rule=rule,
+                track_id=person["track_id"],
+                state="confirmed",
+                started_at=datetime.utcfromtimestamp(ev_data.get("occurred_at", now)),
+                last_seen_at=datetime.utcfromtimestamp(now)
+            )
+            db.add(ep)
+            db.flush()
+
+            ve = DBViolationEvent(
+                id=event_id,
+                episode_id=ep.id,
+                camera_id=self.camera_id,
+                zone_id=zone.zone_id,
+                rule=rule,
+                occurred_at=datetime.utcfromtimestamp(ev_data.get("occurred_at", now)),
+                confidence=float(ev_data.get("confidence", 0.85)),
+                track_id=person["track_id"],
+                model_version="ppe-yolo11s-v1.0",
+                headline_image_path=f"storage/evidence/{event_id}/headline.jpg",
+                annotated_image_path=f"storage/evidence/{event_id}/annotated.jpg",
+                crop_image_path=f"storage/evidence/{event_id}/crop.jpg",
+                clip_path=f"storage/evidence/{event_id}/clip.mp4",
+                status="new",
+                possible_duplicate_of=ev_data.get("possible_duplicate_of")
+            )
+            db.add(ve)
+            db.commit()
+
+            # Broadcast to WebSocket
+            broadcast_sync({
+                "type": "event.new",
+                "event": {
+                    "id": ve.id,
+                    "camera_id": self.camera_id,
+                    "camera_name": self.camera_data.get("name", "Camera"),
+                    "zone_name": zone.name,
+                    "rule": rule,
+                    "occurred_at": ve.occurred_at.isoformat(),
+                    "confidence": ve.confidence,
+                    "status": "new",
+                    "annotated_image_path": ve.annotated_image_path
+                }
+            })
+            db.close()
+        except Exception as e:
+            print(f"[Violation Recording Error] {e}")
 
     def run(self):
         adapter = create_adapter(self.camera_data)
@@ -171,7 +295,7 @@ class StreamWorker(threading.Thread):
         
         while self.running:
             try:
-                cap = cv2.VideoCapture(uri, cv2.CAP_FFMPEG)
+                cap = adapter.open_video_capture(uri)
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 if not cap.isOpened():
                     time.sleep(2.0)
@@ -182,8 +306,95 @@ class StreamWorker(threading.Thread):
                     if not ret or frame is None:
                         time.sleep(0.04)
                         continue
+
+                    self.frame_idx += 1
+                    self.ring_buffer.append(frame.copy())
+                    display_frame = frame.copy()
+                    
+                    # Run AI inference every 3rd frame (~5 FPS)
+                    if self.frame_idx % 3 == 0:
+                        try:
+                            eng = get_shared_inference_engine()
+                            persons = eng.detect_and_track(frame)
+                            now = time.time()
+                            zone_mgr = self.get_zone_manager()
+                            h_img, w_img = frame.shape[:2]
+
+                            # Overlay zone outlines
+                            for z in zone_mgr.zones:
+                                if z.polygon_pts and len(z.polygon_pts) >= 3:
+                                    pts = np.array([[int(p[0]*w_img), int(p[1]*h_img)] for p in z.polygon_pts], np.int32)
+                                    cv2.polylines(display_frame, [pts], True, (0, 165, 255), 2)
+                                    cv2.putText(display_frame, z.name, (pts[0][0], max(20, pts[0][1] - 8)),
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
+
+                            for p in persons:
+                                bx1, by1, bx2, by2 = p["bbox_px"]
+                                head = p["parts"].get("head")
+                                head_pt = head["center"] if head else None
+                                foot_pt = ((p["bbox"][0] + p["bbox"][2]) / 2.0, p["bbox"][3])
+                                
+                                matched_zone = zone_mgr.match_person(p["bbox"], head_pt=head_pt, foot_pt=foot_pt)
+                                
+                                # Person bounding box
+                                box_color = (0, 255, 255) if matched_zone else (160, 160, 160)
+                                cv2.rectangle(display_frame, (bx1, by1), (bx2, by2), box_color, 2)
+                                
+                                # Head bounding box & label
+                                if head:
+                                    hbx1, hby1, hbx2, hby2 = head["bbox_px"]
+                                    is_violating_head = (head.get("cls") == "head_no_helmet" or head.get("cls_id") == 2)
+                                    h_color = (0, 0, 255) if is_violating_head else (0, 255, 0)
+                                    h_label = f"NO HELMET ({head.get('conf', 0):.2f})" if is_violating_head else f"HELMET ({head.get('conf', 0):.2f})"
+                                    cv2.rectangle(display_frame, (hbx1, hby1), (hbx2, hby2), h_color, 2)
+                                    cv2.putText(display_frame, h_label, (hbx1, max(15, hby1 - 5)),
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, h_color, 1)
+
+                                # Evaluate rule violations if in active zone
+                                if matched_zone and not matched_zone.is_excluded:
+                                    if matched_zone.helmet_required:
+                                        state = self.state_evaluator.evaluate_person_rule(
+                                            person_box=p["bbox"],
+                                            associated_parts=p["parts"],
+                                            rule=RULE_NO_HELMET,
+                                            frame_w=w_img,
+                                            frame_h=h_img
+                                        )
+                                        ev = self.episode_engine.process_person_detection(
+                                            track_id=p["track_id"],
+                                            rule=RULE_NO_HELMET,
+                                            frame_state=state,
+                                            timestamp=now,
+                                            pos=foot_pt,
+                                            embedding=p.get("embedding"),
+                                            zone_id=matched_zone.zone_id
+                                        )
+                                        if ev:
+                                            self._record_violation_event(ev, p, matched_zone, RULE_NO_HELMET, now)
+
+                                    if matched_zone.shoes_required:
+                                        state = self.state_evaluator.evaluate_person_rule(
+                                            person_box=p["bbox"],
+                                            associated_parts=p["parts"],
+                                            rule=RULE_NO_SAFETY_SHOES,
+                                            frame_w=w_img,
+                                            frame_h=h_img
+                                        )
+                                        ev = self.episode_engine.process_person_detection(
+                                            track_id=p["track_id"],
+                                            rule=RULE_NO_SAFETY_SHOES,
+                                            frame_state=state,
+                                            timestamp=now,
+                                            pos=foot_pt,
+                                            embedding=p.get("embedding"),
+                                            zone_id=matched_zone.zone_id
+                                        )
+                                        if ev:
+                                            self._record_violation_event(ev, p, matched_zone, RULE_NO_SAFETY_SHOES, now)
+                        except Exception:
+                            pass
                         
-                    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    _, buf = cv2.imencode(".jpg", display_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
                     jpeg_bytes = buf.tobytes()
                     with self.lock:
                         self.latest_frame = frame

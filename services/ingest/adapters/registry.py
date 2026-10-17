@@ -9,6 +9,7 @@ from services.ingest.adapters.hikvision import HikvisionAdapter
 from services.ingest.adapters.dahua import DahuaAdapter, CPPlusAdapter
 from services.ingest.adapters.uniview import UniviewAdapter, AxisAdapter, HanwhaAdapter, GenericRtspAdapter
 from services.ingest.adapters.replay import ReplayAdapter
+from services.ingest.adapters.phone import PhoneCameraAdapter
 
 ADAPTER_MAP: Dict[str, Type[CameraAdapter]] = {
     "hikvision": HikvisionAdapter,
@@ -21,6 +22,8 @@ ADAPTER_MAP: Dict[str, Type[CameraAdapter]] = {
     "generic": GenericRtspAdapter,
     "onvif": GenericRtspAdapter,
     "replay": ReplayAdapter,
+    "phone": PhoneCameraAdapter,
+    "mobile": PhoneCameraAdapter,
 }
 
 def sanitize_host(host: Optional[str]) -> Optional[str]:

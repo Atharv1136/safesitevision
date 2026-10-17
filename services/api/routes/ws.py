@@ -28,9 +28,22 @@ class ConnectionManager:
                 self.disconnect(connection)
 
 manager = ConnectionManager()
+main_loop = None
+
+def broadcast_sync(message: Dict[str, Any]):
+    global main_loop
+    if main_loop and main_loop.is_running():
+        try:
+            import asyncio
+            asyncio.run_coroutine_threadsafe(manager.broadcast(message), main_loop)
+        except Exception:
+            pass
 
 @router.websocket("/ws/events")
 async def websocket_endpoint(websocket: WebSocket):
+    global main_loop
+    import asyncio
+    main_loop = asyncio.get_running_loop()
     await manager.connect(websocket)
     try:
         # Send initial welcome / connection ack

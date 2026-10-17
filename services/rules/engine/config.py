@@ -15,9 +15,9 @@ class VotingConfig(BaseModel):
 
 class ThresholdsConfig(BaseModel):
     head_helmet: float = 0.50
-    head_no_helmet: float = 0.55
+    head_no_helmet: float = 0.40
     foot_safety_shoe: float = 0.50
-    foot_no_safety_shoe: float = 0.55
+    foot_no_safety_shoe: float = 0.45
 
 class SizeGatesConfig(BaseModel):
     min_head_px: int = 24
