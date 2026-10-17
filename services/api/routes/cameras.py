@@ -8,9 +8,10 @@ import time
 import threading
 import json
 import uuid
+import asyncio
 from typing import List, Dict, Any
 import cv2
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -198,6 +199,8 @@ class StreamWorker(threading.Thread):
         self.cached_zones = None
         self.last_zone_refresh = 0.0
 
+        self.last_persons = []
+
     def get_zone_manager(self) -> ZoneManager:
         now = time.time()
         if self.cached_zones is None or (now - self.last_zone_refresh > 5.0):
@@ -259,7 +262,7 @@ class StreamWorker(threading.Thread):
                 occurred_at=datetime.utcfromtimestamp(ev_data.get("occurred_at", now)),
                 confidence=float(ev_data.get("confidence", 0.85)),
                 track_id=person["track_id"],
-                model_version="ppe-yolo11s-v1.0",
+                model_version="yolov8m_hardhat",
                 headline_image_path=f"storage/evidence/{event_id}/headline.jpg",
                 annotated_image_path=f"storage/evidence/{event_id}/annotated.jpg",
                 crop_image_path=f"storage/evidence/{event_id}/crop.jpg",
@@ -270,21 +273,20 @@ class StreamWorker(threading.Thread):
             db.add(ve)
             db.commit()
 
-            # Broadcast to WebSocket
-            broadcast_sync({
-                "type": "event.new",
-                "event": {
-                    "id": ve.id,
-                    "camera_id": self.camera_id,
-                    "camera_name": self.camera_data.get("name", "Camera"),
-                    "zone_name": zone.name,
-                    "rule": rule,
-                    "occurred_at": ve.occurred_at.isoformat(),
-                    "confidence": ve.confidence,
-                    "status": "new",
-                    "annotated_image_path": ve.annotated_image_path
-                }
-            })
+            # Broadcast to WebSocket with both event.created and event.new for frontend compatibility
+            ev_dict = {
+                "id": ve.id,
+                "camera_id": self.camera_id,
+                "camera_name": self.camera_data.get("name", "Camera"),
+                "zone_name": zone.name,
+                "rule": rule,
+                "occurred_at": ve.occurred_at.isoformat(),
+                "confidence": ve.confidence,
+                "status": "new",
+                "annotated_image_path": ve.annotated_image_path
+            }
+            broadcast_sync({"type": "event.created", "event": ev_dict})
+            broadcast_sync({"type": "event.new", "event": ev_dict})
             db.close()
         except Exception as e:
             print(f"[Violation Recording Error] {e}")
@@ -310,47 +312,24 @@ class StreamWorker(threading.Thread):
                     self.frame_idx += 1
                     self.ring_buffer.append(frame.copy())
                     display_frame = frame.copy()
+                    now = time.time()
+                    h_img, w_img = frame.shape[:2]
+                    zone_mgr = self.get_zone_manager()
                     
-                    # Run AI inference every 3rd frame (~5 FPS)
+                    # Run AI inference every 3rd frame (~5 FPS) to conserve compute
                     if self.frame_idx % 3 == 0:
                         try:
                             eng = get_shared_inference_engine()
-                            persons = eng.detect_and_track(frame)
-                            now = time.time()
-                            zone_mgr = self.get_zone_manager()
-                            h_img, w_img = frame.shape[:2]
+                            self.last_persons = eng.detect_and_track(frame)
 
-                            # Overlay zone outlines
-                            for z in zone_mgr.zones:
-                                if z.polygon_pts and len(z.polygon_pts) >= 3:
-                                    pts = np.array([[int(p[0]*w_img), int(p[1]*h_img)] for p in z.polygon_pts], np.int32)
-                                    cv2.polylines(display_frame, [pts], True, (0, 165, 255), 2)
-                                    cv2.putText(display_frame, z.name, (pts[0][0], max(20, pts[0][1] - 8)),
-                                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
-
-                            for p in persons:
-                                bx1, by1, bx2, by2 = p["bbox_px"]
+                            for p in self.last_persons:
                                 head = p["parts"].get("head")
                                 head_pt = head["center"] if head else None
                                 foot_pt = ((p["bbox"][0] + p["bbox"][2]) / 2.0, p["bbox"][3])
                                 
                                 matched_zone = zone_mgr.match_person(p["bbox"], head_pt=head_pt, foot_pt=foot_pt)
-                                
-                                # Person bounding box
-                                box_color = (0, 255, 255) if matched_zone else (160, 160, 160)
-                                cv2.rectangle(display_frame, (bx1, by1), (bx2, by2), box_color, 2)
-                                
-                                # Head bounding box & label
-                                if head:
-                                    hbx1, hby1, hbx2, hby2 = head["bbox_px"]
-                                    is_violating_head = (head.get("cls") == "head_no_helmet" or head.get("cls_id") == 2)
-                                    h_color = (0, 0, 255) if is_violating_head else (0, 255, 0)
-                                    h_label = f"NO HELMET ({head.get('conf', 0):.2f})" if is_violating_head else f"HELMET ({head.get('conf', 0):.2f})"
-                                    cv2.rectangle(display_frame, (hbx1, hby1), (hbx2, hby2), h_color, 2)
-                                    cv2.putText(display_frame, h_label, (hbx1, max(15, hby1 - 5)),
-                                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, h_color, 1)
 
-                                # Evaluate rule violations if in active zone
+                                # Evaluate rule violations if inside active zone
                                 if matched_zone and not matched_zone.is_excluded:
                                     if matched_zone.helmet_required:
                                         state = self.state_evaluator.evaluate_person_rule(
@@ -393,7 +372,34 @@ class StreamWorker(threading.Thread):
                                             self._record_violation_event(ev, p, matched_zone, RULE_NO_SAFETY_SHOES, now)
                         except Exception:
                             pass
+
+                    # Stably render detection overlay on every output frame
+                    for z in zone_mgr.zones:
+                        if z.polygon_pts and len(z.polygon_pts) >= 3:
+                            pts = np.array([[int(pt[0]*w_img), int(pt[1]*h_img)] for pt in z.polygon_pts], np.int32)
+                            cv2.polylines(display_frame, [pts], True, (0, 165, 255), 2)
+                            cv2.putText(display_frame, z.name, (pts[0][0], max(20, pts[0][1] - 8)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
+
+                    for p in self.last_persons:
+                        bx1, by1, bx2, by2 = p["bbox_px"]
+                        head = p["parts"].get("head")
+                        head_pt = head["center"] if head else None
+                        foot_pt = ((p["bbox"][0] + p["bbox"][2]) / 2.0, p["bbox"][3])
+                        matched_zone = zone_mgr.match_person(p["bbox"], head_pt=head_pt, foot_pt=foot_pt)
+
+                        box_color = (0, 255, 255) if matched_zone else (160, 160, 160)
+                        cv2.rectangle(display_frame, (bx1, by1), (bx2, by2), box_color, 2)
                         
+                        if head:
+                            hbx1, hby1, hbx2, hby2 = head["bbox_px"]
+                            is_violating_head = (head.get("cls") == "head_no_helmet" or head.get("cls_id") == 2)
+                            h_color = (0, 0, 255) if is_violating_head else (0, 255, 0)
+                            h_label = f"NO HELMET ({head.get('conf', 0):.2f})" if is_violating_head else f"HELMET ({head.get('conf', 0):.2f})"
+                            cv2.rectangle(display_frame, (hbx1, hby1), (hbx2, hby2), h_color, 2)
+                            cv2.putText(display_frame, h_label, (hbx1, max(15, hby1 - 5)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, h_color, 1)
+
                     _, buf = cv2.imencode(".jpg", display_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
                     jpeg_bytes = buf.tobytes()
                     with self.lock:
@@ -428,7 +434,7 @@ stream_manager = CameraStreamManager()
 
 
 @router.get("/{camera_id}/live")
-def get_camera_live_stream(camera_id: str, db: Session = Depends(get_db)):
+async def get_camera_live_stream(camera_id: str, request: Request, db: Session = Depends(get_db)):
     """Continuous low-latency MJPEG live video stream for browser <img src="...">."""
     camera = db.query(Camera).filter(Camera.id == camera_id).first()
     if not camera:
@@ -454,14 +460,15 @@ def get_camera_live_stream(camera_id: str, db: Session = Depends(get_db)):
         "rtsp_url": camera.rtsp_url_enc
     })
 
-    def frame_generator():
+    async def frame_generator():
         last_sent = 0
-        # Wait up to 10s for first keyframe if camera just opened
         t_wait = time.time()
         while worker.latest_jpeg is None and (time.time() - t_wait < 10.0):
-            time.sleep(0.1)
+            if await request.is_disconnected():
+                return
+            await asyncio.sleep(0.1)
             
-        while True:
+        while not await request.is_disconnected():
             with worker.lock:
                 jpeg = worker.latest_jpeg
                 t = worker.last_update
@@ -471,7 +478,7 @@ def get_camera_live_stream(camera_id: str, db: Session = Depends(get_db)):
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
                 )
-            time.sleep(0.035)
+            await asyncio.sleep(0.035)
 
     return StreamingResponse(
         frame_generator(),

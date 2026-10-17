@@ -9,6 +9,8 @@ import cv2
 import numpy as np
 import torch
 from ultralytics import YOLO
+from ultralytics.utils import LOGGER
+LOGGER.setLevel("WARNING")
 
 from classes import (
     CLASS_PERSON,

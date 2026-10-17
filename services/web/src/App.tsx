@@ -136,7 +136,7 @@ export function App() {
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          if (msg.type === "event.created" && msg.event) {
+          if ((msg.type === "event.created" || msg.type === "event.new") && msg.event) {
             setEvents((prev) => [msg.event, ...prev]);
             playAlertSound();
           }

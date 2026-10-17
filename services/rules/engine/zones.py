@@ -205,7 +205,25 @@ class ZoneManager:
         # Fallback to center point
         if len(bbox) >= 4:
             center_pt = ((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0)
-            return self.match_foot_point(center_pt)
+            winning_center = self.match_foot_point(center_pt)
+            if winning_center is not None:
+                return winning_center
+
+        # Fallback to bounding box overlap (for loose / wall / desk zones)
+        if len(bbox) >= 4:
+            from shapely.geometry import box as shapely_box
+            p_box = shapely_box(bbox[0], bbox[1], bbox[2], bbox[3])
+            
+            # Check exclusion first
+            for ex in self.exclusion_zones:
+                if ex.shapely_poly and ex.shapely_poly.intersects(p_box):
+                    inter_area = ex.shapely_poly.intersection(p_box).area
+                    if inter_area > 0.5 * p_box.area:
+                        return None
+
+            for zone in self.zones:
+                if zone.shapely_poly and zone.shapely_poly.intersects(p_box):
+                    return zone
 
         return None
 
