@@ -435,3 +435,82 @@ def test_tc_logic_07_dual_violation_same_person(test_config):
     assert len(events) == 2, f"Dual violation must produce 2 distinct events (one per rule), got {len(events)}"
     rules_fired = {e["rule"] for e in events}
     assert rules_fired == {RULE_NO_HELMET, RULE_NO_SAFETY_SHOES}
+
+# -------------------------------------------------------------
+# TC-EVIDENCE-01: EvidenceBuilder saves photo artifacts, metadata, and PDF report
+# -------------------------------------------------------------
+def test_tc_evidence_builder_photo_and_pdf(tmp_path):
+    import os
+    import cv2
+    import json
+    from services.evidence.builder import EvidenceBuilder
+    from classes import RULE_NO_SAFETY_SHOES
+
+    builder = EvidenceBuilder(storage_dir=str(tmp_path / "evidence"))
+    dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.circle(dummy_frame, (320, 240), 50, (0, 0, 255), -1)
+
+    person = {
+        "track_id": 42,
+        "bbox": [0.2, 0.2, 0.8, 0.9],
+        "conf": 0.92
+    }
+
+    event_id = "test-event-evidence-123"
+    result = builder.build_evidence(
+        event_id=event_id,
+        frames=[dummy_frame] * 10,
+        person_data=person,
+        camera_name="Test Bench Cam",
+        zone_name="Heavy Machinery Zone",
+        rule=RULE_NO_SAFETY_SHOES,
+        timestamp=1700000000.0
+    )
+
+    # 1. Headline, annotated, crop, and clip files exist
+    assert os.path.exists(result["headline_image_path"])
+    assert os.path.exists(result["annotated_image_path"])
+    assert os.path.exists(result["crop_image_path"])
+    assert os.path.exists(result["clip_path"])
+
+    # 2. Metadata JSON exists and has valid contents
+    assert os.path.exists(result["meta_path"])
+    with open(result["meta_path"], "r", encoding="utf-8") as f:
+        meta = json.load(f)
+        assert meta["event_id"] == event_id
+        assert meta["rule"] == RULE_NO_SAFETY_SHOES
+        assert meta["camera_name"] == "Test Bench Cam"
+        assert meta["confidence"] == 0.92
+
+    # 3. Official PDF Report card exists and is valid non-empty PDF
+    assert os.path.exists(result["report_path"])
+    assert os.path.getsize(result["report_path"]) > 1000
+
+# -------------------------------------------------------------
+# TC-LOGIC-09: Safety shoes rule evaluation states
+# -------------------------------------------------------------
+def test_tc_logic_09_safety_shoes_evaluation(test_config):
+    from services.rules.engine.states import FrameStateEvaluator
+    from classes import CLASS_FOOT_SAFETY_SHOE, CLASS_FOOT_NO_SAFETY_SHOE
+
+    evaluator = FrameStateEvaluator(test_config)
+
+    # Person with non-compliant shoes (no safety shoes)
+    person_box = [0.3, 0.1, 0.7, 0.9]
+    parts_violating = {
+        "feet": [
+            {"cls_id": CLASS_FOOT_NO_SAFETY_SHOE, "cls": "foot_no_safety_shoe", "conf": 0.88, "bbox": [0.35, 0.80, 0.45, 0.90]}
+        ]
+    }
+    state_v = evaluator.evaluate_person_rule(person_box, parts_violating, RULE_NO_SAFETY_SHOES, 1280, 720)
+    assert state_v == STATE_VIOLATING
+
+    # Person with compliant safety shoes
+    parts_compliant = {
+        "feet": [
+            {"cls_id": CLASS_FOOT_SAFETY_SHOE, "cls": "foot_safety_shoe", "conf": 0.85, "bbox": [0.35, 0.80, 0.45, 0.90]}
+        ]
+    }
+    state_c = evaluator.evaluate_person_rule(person_box, parts_compliant, RULE_NO_SAFETY_SHOES, 1280, 720)
+    assert state_c == STATE_COMPLIANT
+

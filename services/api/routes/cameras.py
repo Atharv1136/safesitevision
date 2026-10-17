@@ -400,6 +400,16 @@ class StreamWorker(threading.Thread):
                             cv2.putText(display_frame, h_label, (hbx1, max(15, hby1 - 5)),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, h_color, 1)
 
+                        feet = p["parts"].get("feet", [])
+                        for foot in feet:
+                            fbx1, fby1, fbx2, fby2 = foot["bbox_px"]
+                            is_violating_foot = (foot.get("cls") == "foot_no_safety_shoe" or foot.get("cls_id") == 4)
+                            f_color = (0, 69, 255) if is_violating_foot else (50, 205, 50)
+                            f_label = f"NO SHOES ({foot.get('conf', 0):.2f})" if is_violating_foot else f"SAFETY SHOE ({foot.get('conf', 0):.2f})"
+                            cv2.rectangle(display_frame, (fbx1, fby1), (fbx2, fby2), f_color, 2)
+                            cv2.putText(display_frame, f_label, (fbx1, max(15, fby1 - 5)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, f_color, 1)
+
                     _, buf = cv2.imencode(".jpg", display_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
                     jpeg_bytes = buf.tobytes()
                     with self.lock:

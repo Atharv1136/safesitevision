@@ -120,9 +120,168 @@ class EvidenceBuilder:
             out.write(f)
         out.release()
 
+        # 6. Structured Metadata JSON
+        meta_path = event_dir / "metadata.json"
+        time_str_iso = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(timestamp))
+        meta_data = {
+            "event_id": event_id,
+            "timestamp": timestamp,
+            "occurred_at": time_str_iso,
+            "camera_name": camera_name,
+            "zone_name": zone_name,
+            "rule": rule,
+            "track_id": person_data.get("track_id"),
+            "confidence": person_data.get("conf", 0.85),
+            "bbox": person_data.get("bbox"),
+            "headline_image": "headline.jpg",
+            "annotated_image": "annotated.jpg",
+            "crop_image": "crop.jpg",
+            "clip": "clip.mp4",
+            "report_pdf": "report.pdf"
+        }
+        import json
+        with open(meta_path, "w", encoding="utf-8") as f_meta:
+            json.dump(meta_data, f_meta, indent=2)
+
+        # 7. Official Violation Report Card PDF with Photographic Evidence
+        report_path = event_dir / "report.pdf"
+        self._generate_pdf_report(
+            pdf_path=str(report_path),
+            event_id=event_id,
+            camera_name=camera_name,
+            zone_name=zone_name,
+            rule=rule,
+            timestamp_str=time_str_iso,
+            confidence=person_data.get("conf", 0.85),
+            track_id=str(person_data.get("track_id", "N/A")),
+            annotated_image_path=str(annotated_path)
+        )
+
         return {
             "headline_image_path": str(headline_path).replace("\\", "/"),
             "annotated_image_path": str(annotated_path).replace("\\", "/"),
             "crop_image_path": str(crop_path).replace("\\", "/"),
-            "clip_path": str(clip_path).replace("\\", "/")
+            "clip_path": str(clip_path).replace("\\", "/"),
+            "report_path": str(report_path).replace("\\", "/"),
+            "meta_path": str(meta_path).replace("\\", "/")
         }
+
+    def _generate_pdf_report(
+        self,
+        pdf_path: str,
+        event_id: str,
+        camera_name: str,
+        zone_name: str,
+        rule: str,
+        timestamp_str: str,
+        confidence: float,
+        track_id: str,
+        annotated_image_path: str
+    ):
+        """Generates official 1-page PDF violation report card with photographic evidence embedded."""
+        try:
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.pagesizes import letter
+            from reportlab.lib import colors
+
+            p = canvas.Canvas(pdf_path, pagesize=letter)
+            p.setTitle(f"Violation_Report_{event_id[:8]}")
+
+            # Top Header Banner
+            p.setFillColor(colors.HexColor("#1e293b"))
+            p.rect(0, 720, 612, 72, fill=True, stroke=False)
+            p.setFillColor(colors.white)
+            p.setFont("Helvetica-Bold", 18)
+            p.drawString(36, 755, "SAFESITE VISION - OFFICIAL PPE VIOLATION REPORT")
+            p.setFont("Helvetica", 9)
+            p.drawString(36, 735, "Industrial Automated Safety Compliance Platform | Incident Evidence Record")
+
+            # Incident Overview Header
+            p.setFillColor(colors.HexColor("#0f172a"))
+            p.setFont("Helvetica-Bold", 13)
+            p.drawString(36, 695, "Incident & Violation Overview")
+
+            # Overview Grid (Two columns)
+            p.setFont("Helvetica-Bold", 10)
+            p.drawString(36, 672, "Event ID:")
+            p.setFont("Helvetica", 10)
+            p.drawString(120, 672, event_id)
+
+            p.setFont("Helvetica-Bold", 10)
+            p.drawString(36, 654, "Rule Violated:")
+            p.setFont("Helvetica-Bold", 10)
+            p.setFillColor(colors.HexColor("#dc2626"))
+            p.drawString(120, 654, rule.replace("_", " ").upper())
+
+            p.setFillColor(colors.HexColor("#0f172a"))
+            p.setFont("Helvetica-Bold", 10)
+            p.drawString(36, 636, "Confidence:")
+            p.setFont("Helvetica", 10)
+            p.drawString(120, 636, f"{confidence * 100:.1f}% (Automated Verification)")
+
+            # Column 2
+            p.setFont("Helvetica-Bold", 10)
+            p.drawString(330, 672, "Camera:")
+            p.setFont("Helvetica", 10)
+            p.drawString(410, 672, camera_name)
+
+            p.setFont("Helvetica-Bold", 10)
+            p.drawString(330, 654, "Monitored Zone:")
+            p.setFont("Helvetica", 10)
+            p.drawString(410, 654, zone_name)
+
+            p.setFont("Helvetica-Bold", 10)
+            p.drawString(330, 636, "Timestamp:")
+            p.setFont("Helvetica", 10)
+            p.drawString(410, 636, timestamp_str)
+
+            p.setFont("Helvetica-Bold", 10)
+            p.drawString(330, 618, "Worker Track ID:")
+            p.setFont("Helvetica", 10)
+            p.drawString(410, 618, f"#{track_id}")
+
+            # Evidence Section Header
+            p.setStrokeColor(colors.HexColor("#cbd5e1"))
+            p.setLineWidth(1)
+            p.line(36, 604, 576, 604)
+
+            p.setFillColor(colors.HexColor("#0f172a"))
+            p.setFont("Helvetica-Bold", 12)
+            p.drawString(36, 584, "Photographic Evidence Artifact (Captured Live Stream Frame)")
+
+            # Embed the Actual Photo
+            if os.path.exists(annotated_image_path):
+                try:
+                    p.drawImage(
+                        annotated_image_path,
+                        36,
+                        220,
+                        width=540,
+                        height=350,
+                        preserveAspectRatio=True
+                    )
+                except Exception as img_err:
+                    p.setFont("Helvetica", 10)
+                    p.drawString(36, 450, f"[Image display error: {img_err}]")
+            else:
+                p.drawString(36, 450, "[Photographic evidence file not found]")
+
+            # Evidence Caption / Verification Seal
+            p.setFont("Helvetica-Bold", 9)
+            p.setFillColor(colors.HexColor("#475569"))
+            p.drawString(36, 195, f"Artifact Verification: storage/evidence/{event_id}/annotated.jpg")
+            p.setFont("Helvetica-Oblique", 8)
+            p.drawString(36, 180, "Image captured automatically by SafeSite Vision AI Rule Engine. Bounding box & overlay applied at detection.")
+
+            # Bottom Confidential / Compliance Banner
+            p.setFillColor(colors.HexColor("#f1f5f9"))
+            p.rect(36, 45, 540, 40, fill=True, stroke=False)
+            p.setFillColor(colors.HexColor("#64748b"))
+            p.setFont("Helvetica", 8)
+            p.drawString(46, 68, "Confidential Industrial Safety Record - SafeSite Vision Automated Compliance Engine.")
+            p.drawString(46, 54, "This document serves as permanent electronic safety compliance proof for audits and workplace investigations.")
+
+            p.showPage()
+            p.save()
+        except Exception as e:
+            print(f"[PDF Generation Warning] Could not create PDF report: {e}")
